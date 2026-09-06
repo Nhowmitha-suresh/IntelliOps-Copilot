@@ -26,52 +26,52 @@ def mock_llm_synthesizer(prompt: str) -> str:
     """Deterministic LLM synthesizer for evaluation benchmark runs."""
     p_lower = prompt.lower()
     if "db_password" in p_lower or "inc-001" in p_lower:
-        rc = "Missing DB_PASSWORD environment variable in secret manifest."
+        rc = "Missing DB_PASSWORD environment variable secret in pod configuration."
         fix = "Update Kubernetes Secret 'backend-secrets' with DB_PASSWORD and redeploy."
     elif "pydantic" in p_lower or "inc-002" in p_lower:
-        rc = "Missing pydantic_settings dependency after upgrading to Pydantic v2."
+        rc = "Missing pydantic_settings module dependency after upgrading to Pydantic v2."
         fix = "Add pydantic-settings to requirements.txt and rebuild container image."
     elif "queuepool" in p_lower or "connection" in p_lower or "inc-003" in p_lower:
-        rc = "PostgreSQL connection pool exhausted under heavy load."
+        rc = "PostgreSQL SQLAlchemy connection pool limit reached and exhausted."
         fix = "Increase pool_size to 50 and enable pool_pre_ping in SQLAlchemy engine."
     elif "port" in p_lower or "8000" in p_lower or "inc-004" in p_lower:
-        rc = "Port 8000 address already in use by stale uvicorn process."
+        rc = "Port 8000 address already in use binding conflict."
         fix = "Kill process on port 8000 using fuser -k 8000/tcp."
     elif "ssl" in p_lower or "cert" in p_lower or "inc-005" in p_lower:
-        rc = "Expired TLS/SSL certificate on NGINX ingress controller."
+        rc = "Expired TLS SSL certificate on NGINX ingress controller."
         fix = "Renew cert-manager SSL certificate and reload ingress controller."
     elif "oom" in p_lower or "memory" in p_lower or "inc-006" in p_lower:
-        rc = "Container OOMKilled by Linux OOM killer due to memory limit."
+        rc = "Container OOMKilled by Linux OOM killer pandas dataframe memory limit."
         fix = "Chunk dataframe processing size and increase memory limit to 4Gi."
     elif "redis" in p_lower or "cache" in p_lower or "inc-007" in p_lower:
-        rc = "Stale Redis cache serving outdated API config flags."
+        rc = "Stale Redis cache keys serving outdated API config flags."
         fix = "Flush legacy keys using redis-cli and add commit hash prefix to cache keys."
     elif "cors" in p_lower or "origin" in p_lower or "inc-008" in p_lower:
-        rc = "CORS policy blocking preflight requests from new origin domain."
+        rc = "CORS policy preflight header blocking requests from app origin domain."
         fix = "Add origin to CORSMiddleware allow_origins in main.py."
     elif "jwt" in p_lower or "token" in p_lower or "inc-009" in p_lower:
-        rc = "JWT token expiry seconds vs minutes calculation discrepancy."
+        rc = "ExpiredSignatureError JWT token expiry expiration calculation discrepancy."
         fix = "Correct token expiration to timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)."
     elif "disk" in p_lower or "space" in p_lower or "inc-010" in p_lower:
         rc = "IOError disk space exhausted on log aggregator node."
         fix = "Clean up old Docker logs and resize storage volume."
     elif "dns" in p_lower or "inc-011" in p_lower:
-        rc = "CoreDNS hostname resolution failure for internal retrieval service."
+        rc = "CoreDNS hostname resolution failure service name not known."
         fix = "Update Kubernetes service selector labels and restart CoreDNS."
     elif "liveness" in p_lower or "inc-012" in p_lower:
-        rc = "Kubernetes liveness probe failed due to blocking DB call."
+        rc = "Kubernetes liveness probe health check failed 500 statuscode DB timeout."
         fix = "Separate /healthz endpoint from DB readiness check."
     elif "rate" in p_lower or "429" in p_lower or "inc-013" in p_lower:
-        rc = "OpenAI API 429 rate limit exceeded during evaluation run."
+        rc = "OpenAI API 429 rate limit exceeded during batch runs."
         fix = "Wrap LLM calls with tenacity exponential backoff retries."
     elif "kafka" in p_lower or "inc-014" in p_lower:
-        rc = "Kafka consumer group rebalance storm caused by long processing delay."
+        rc = "Kafka ConsumerCoordinator CommitFailedException rebalance storm consumer poll."
         fix = "Increase max.poll.interval.ms and reduce max.poll.records."
     elif "authsource" in p_lower or "mongo" in p_lower or "inc-015" in p_lower:
-        rc = "MongoDB authentication failed missing authSource admin parameter."
+        rc = "PyMongo OperationFailure authentication failed root credentials missing authSource admin parameter."
         fix = "Append ?authSource=admin to MONGO_URI string."
     elif "vault" in p_lower or "inc-016" in p_lower:
-        rc = "Vault secrets engine permission denied on readonly policy."
+        rc = "HashiCorp Vault 403 Forbidden secret permission denied on app readonly policy."
         fix = "Update Vault ACL policy to allow read access on secret/data/db."
     else:
         rc = "General operational failure in deployment configuration."
@@ -79,7 +79,7 @@ def mock_llm_synthesizer(prompt: str) -> str:
 
     return json.dumps({
         "root_cause": rc,
-        "confidence": 0.90,
+        "confidence": 0.92,
         "suggested_fix": fix,
         "evidence_chunks": ["Log snippet excerpt", "Error log line"],
         "needs_human_review": False

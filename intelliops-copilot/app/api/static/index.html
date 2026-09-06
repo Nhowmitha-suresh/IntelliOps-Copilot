@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IntelliOps Copilot — Root Cause Diagnosis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%);
+      --glass-bg: rgba(30, 41, 59, 0.7);
+      --glass-border: rgba(255, 255, 255, 0.1);
+      --card-bg: rgba(15, 23, 42, 0.6);
+      --accent-blue: #6366f1;
+      --accent-hover: #4f46e5;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --badge-green: #22c55e;
+      --badge-yellow: #eab308;
+      --badge-red: #ef4444;
+      --badge-blue: #3b82f6;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-gradient);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 900px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    header h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      background: linear-gradient(to right, #818cf8, #c084fc, #38bdf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 0.5rem;
+    }
+
+    header p {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+    }
+
+    .glass-card {
+      background: var(--glass-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--glass-border);
+      border-radius: 16px;
+      padding: 2rem;
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+      margin-bottom: 2rem;
+    }
+
+    .form-group {
+      margin-bottom: 1.5rem;
+    }
+
+    label {
+      display: block;
+      font-weight: 500;
+      margin-bottom: 0.5rem;
+      font-size: 0.95rem;
+      color: #e2e8f0;
+    }
+
+    textarea {
+      width: 100%;
+      height: 150px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 10px;
+      padding: 1rem;
+      color: #f8fafc;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+      resize: vertical;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    textarea:focus, select:focus {
+      outline: none;
+      border-color: var(--accent-blue);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+    }
+
+    select {
+      width: 100%;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 10px;
+      padding: 0.75rem 1rem;
+      color: #f8fafc;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+
+    .btn-diagnose {
+      width: 100%;
+      background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+      color: white;
+      font-size: 1.05rem;
+      font-weight: 600;
+      padding: 0.9rem;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 0.5rem;
+      transition: transform 0.1s, box-shadow 0.2s;
+    }
+
+    .btn-diagnose:hover {
+      box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4);
+      transform: translateY(-1px);
+    }
+
+    .btn-diagnose:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(255, 255, 255, 0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      display: none;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Results Panel */
+    #results-panel {
+      display: none;
+    }
+
+    .result-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .badges {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .badge {
+      padding: 0.35rem 0.8rem;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .badge-green { background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4); }
+    .badge-yellow { background: rgba(234, 179, 8, 0.2); color: #fde047; border: 1px solid rgba(234, 179, 8, 0.4); }
+    .badge-red { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.4); }
+    .badge-review { background: rgba(249, 115, 22, 0.2); color: #fdba74; border: 1px solid rgba(249, 115, 22, 0.4); }
+
+    .result-section {
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 1.25rem;
+      margin-bottom: 1.25rem;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .result-section h3 {
+      font-size: 1rem;
+      color: #cbd5e1;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .root-cause-text {
+      font-size: 1.1rem;
+      color: #f8fafc;
+      font-weight: 500;
+      line-height: 1.5;
+    }
+
+    pre.code-block {
+      background: #090d16;
+      padding: 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.88rem;
+      color: #38bdf8;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      white-space: pre-wrap;
+    }
+
+    /* Accordion */
+    details {
+      background: var(--card-bg);
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      overflow: hidden;
+    }
+
+    summary {
+      padding: 1rem 1.25rem;
+      font-weight: 600;
+      cursor: pointer;
+      color: #cbd5e1;
+      user-select: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    summary:hover {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .evidence-list {
+      padding: 1rem 1.25rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .evidence-item {
+      background: #090d16;
+      border-radius: 6px;
+      padding: 0.75rem;
+      margin-bottom: 0.75rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.82rem;
+      color: #a5b4fc;
+      border-left: 3px solid var(--accent-blue);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>IntelliOps Copilot 🚀</h1>
+      <p>RAG-powered root-cause diagnosis for deployment & ops incidents</p>
+    </header>
+
+    <!-- Input Form -->
+    <div class="glass-card">
+      <form id="diagnose-form">
+        <div class="form-group">
+          <label for="issue_description">Issue Description / Error Logs</label>
+          <textarea id="issue_description" placeholder="Paste application logs, stack traces, or describe the deployment anomaly..." required></textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="environment">Environment (Optional)</label>
+          <select id="environment">
+            <option value="">All Environments</option>
+            <option value="production">Production</option>
+            <option value="staging">Staging</option>
+            <option value="development">Development</option>
+          </select>
+        </div>
+
+        <button type="submit" class="btn-diagnose" id="submit-btn">
+          <div class="spinner" id="spinner"></div>
+          <span id="btn-text">Diagnose Root Cause</span>
+        </button>
+      </form>
+    </div>
+
+    <!-- Results Panel -->
+    <div class="glass-card" id="results-panel">
+      <div class="result-header">
+        <h2>Diagnosis Report</h2>
+        <div class="badges">
+          <span id="confidence-badge" class="badge"></span>
+          <span id="review-badge" class="badge badge-review" style="display: none;">⚠️ Human Review Required</span>
+        </div>
+      </div>
+
+      <!-- Root Cause -->
+      <div class="result-section">
+        <h3>🔍 Identified Root Cause</h3>
+        <p class="root-cause-text" id="root-cause-val"></p>
+      </div>
+
+      <!-- Suggested Fix -->
+      <div class="result-section">
+        <h3>💡 Suggested Remediation</h3>
+        <pre class="code-block" id="suggested-fix-val"></pre>
+      </div>
+
+      <!-- Evidence Chunks Collapsible Accordion -->
+      <details id="evidence-accordion">
+        <summary>
+          <span>📚 Supporting Evidence & Context Chunks</span>
+          <span id="evidence-count-badge">0 items</span>
+        </summary>
+        <div class="evidence-list" id="evidence-list-container"></div>
+      </details>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('diagnose-form');
+    const submitBtn = document.getElementById('submit-btn');
+    const spinner = document.getElementById('spinner');
+    const btnText = document.getElementById('btn-text');
+    const resultsPanel = document.getElementById('results-panel');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const issueDesc = document.getElementById('issue_description').value.trim();
+      const env = document.getElementById('environment').value;
+
+      if (!issueDesc) return;
+
+      // Loading state
+      submitBtn.disabled = true;
+      spinner.style.display = 'inline-block';
+      btnText.textContent = 'Diagnosing...';
+      resultsPanel.style.display = 'none';
+
+      try {
+        const response = await fetch('/diagnose', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            issue_description: issueDesc,
+            environment: env || null
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`Server returned HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        renderResults(data);
+      } catch (err) {
+        alert('Diagnosis request failed: ' + err.message);
+      } finally {
+        submitBtn.disabled = false;
+        spinner.style.display = 'none';
+        btnText.textContent = 'Diagnose Root Cause';
+      }
+    });
+
+    function renderResults(data) {
+      document.getElementById('root-cause-val').textContent = data.root_cause || 'N/A';
+      document.getElementById('suggested-fix-val').textContent = data.suggested_fix || 'No remediation suggested.';
+
+      // Confidence badge calculation
+      const conf = data.confidence || 0.0;
+      const confBadge = document.getElementById('confidence-badge');
+      const pct = (conf * 100).toFixed(0);
+      
+      if (conf >= 0.8) {
+        confBadge.className = 'badge badge-green';
+        confBadge.textContent = `High Confidence (${pct}%)`;
+      } else if (conf >= 0.5) {
+        confBadge.className = 'badge badge-yellow';
+        confBadge.textContent = `Medium Confidence (${pct}%)`;
+      } else {
+        confBadge.className = 'badge badge-red';
+        confBadge.textContent = `Low Confidence (${pct}%)`;
+      }
+
+      // Human review flag badge
+      const reviewBadge = document.getElementById('review-badge');
+      reviewBadge.style.display = data.needs_human_review ? 'inline-flex' : 'none';
+
+      // Evidence chunks
+      const chunks = data.evidence_chunks || [];
+      document.getElementById('evidence-count-badge').textContent = `${chunks.length} chunks`;
+      const container = document.getElementById('evidence-list-container');
+      container.innerHTML = '';
+
+      if (chunks.length === 0) {
+        container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No direct evidence chunks matched.</p>';
+      } else {
+        chunks.forEach((chunkText) => {
+          const item = document.createElement('div');
+          item.className = 'evidence-item';
+          item.textContent = chunkText;
+          container.appendChild(item);
+        });
+      }
+
+      resultsPanel.style.display = 'block';
+      resultsPanel.scrollIntoView({ behavior: 'smooth' });
+    }
+  </script>
+</body>
+</html>
