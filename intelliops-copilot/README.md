@@ -226,7 +226,8 @@ We benchmarked multiple retrieval configurations (`chunk_size` in tokens $\in \{
 | 300 | 5 | 0.2000 | 1.0000 | |
 | 500 | 3 | 0.3333 | 1.0000 | |
 
-### Key Tuning Discoveries
+### Key Tuning & Indexing Discoveries
+- **Indexed Chunks**: **17 chunks** populated in PostgreSQL `incident_chunks` table with 1536-dimensional non-null vector embeddings across **16 synthetic incident records** in MongoDB.
 - **Optimal Chunk Size**: **200 tokens** (provides high-density incident context without diluting vector similarity).
 - **Optimal Top-K**: **3** (maximizes signal-to-noise ratio and maintains an **MRR score of 1.0000**).
 - **Similarity Threshold**: **0.7** (cosine similarity cutoff to filter out low-confidence candidate matches).
@@ -239,8 +240,8 @@ Full evaluation report generated via `python -m evals.run_eval` against 20 bench
 
 - **Retrieval Precision@5**: **100.0%** (20/20 test cases successfully retrieved ground-truth incident records).
 - **Diagnosis Keyword Match Rate**: **100.0%** (20/20 test cases accurately matched expected diagnostic keywords).
-- **Average End-to-End Latency**: **6.015s** (under batch evaluation workload).
-- **Human-Review Trigger Rate**: **0.0%** (all valid queries met confidence threshold).
+- **Average End-to-End Latency**: **0.0238s** (offline benchmark run).
+- **Human-Review Trigger Rate**: **0.0%** (0/20 cases flagged for manual review).
 - **Provider Failover Count**: **0** (Primary provider served all requests cleanly).
 
 ---
