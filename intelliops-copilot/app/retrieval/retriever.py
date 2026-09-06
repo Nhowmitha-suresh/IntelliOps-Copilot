@@ -40,7 +40,15 @@ def retrieve_similar_incidents(
         embed_fn = embedder.embed_texts
 
     # 1. Embed query
-    query_embeddings = embed_fn([query_text])
+    try:
+        query_embeddings = embed_fn([query_text])
+    except Exception as emb_err:
+        logger.warning(
+            "Primary embedding provider unavailable; using fallback deterministic vector search.",
+            error=str(emb_err),
+        )
+        query_embeddings = [embedder._deterministic_embedding(query_text)]
+
     if not query_embeddings:
         return []
     query_vector = query_embeddings[0]

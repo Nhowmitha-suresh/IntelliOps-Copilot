@@ -61,7 +61,15 @@ def run_indexing_pipeline(
         logger.info(
             "Embedding incident chunks", incident_id=inc_id, num_chunks=len(chunks)
         )
-        embeddings = embed_fn(chunk_texts)
+        try:
+            embeddings = embed_fn(chunk_texts)
+        except Exception as emb_exc:
+            logger.warning(
+                "Primary embedder unavailable during indexing; using deterministic fallback vector.",
+                incident_id=inc_id,
+                error=str(emb_exc),
+            )
+            embeddings = [embedder._deterministic_embedding(t) for t in chunk_texts]
 
         # Prepare payload for pgvector
         payload = []

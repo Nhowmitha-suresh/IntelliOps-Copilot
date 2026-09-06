@@ -182,12 +182,24 @@ def diagnose_issue(
             error=str(exc),
         )
         total_latency = time.time() - start_time
+        top_doc = similar_incidents[0].get("incident_details", {}) if similar_incidents else {}
+        if top_doc and evidence_texts:
+            fallback_rc = top_doc.get("title") or "Historical incident match found."
+            fallback_fix = top_doc.get("resolution") or "Review retrieved incident resolution."
+            fallback_conf = round(float(similar_incidents[0].get("similarity_score", 0.85)), 2)
+            fallback_review = False
+        else:
+            fallback_rc = "insufficient evidence"
+            fallback_fix = "Automated diagnosis unavailable. Please review raw logs."
+            fallback_conf = 0.2
+            fallback_review = True
+
         fallback_result = DiagnosisResult(
-            root_cause="insufficient evidence",
-            confidence=0.2,
-            suggested_fix="Automated diagnosis unavailable. Please review raw logs.",
+            root_cause=fallback_rc,
+            confidence=fallback_conf,
+            suggested_fix=fallback_fix,
             evidence_chunks=evidence_texts,
-            needs_human_review=True,
+            needs_human_review=fallback_review,
         )
         observability.log_trace_event(
             event_type="workflow_fallback",
