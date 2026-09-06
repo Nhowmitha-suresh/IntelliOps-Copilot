@@ -24,17 +24,16 @@ intelliops-copilot/
   ├── app/
   │   ├── config.py         # Application configuration & env parsing (Pydantic Settings)
   │   ├── main.py           # FastAPI application entry point
-  │   ├── ingestion/        # Log parsing, metric streaming, incident ingestion & MongoDB client
-  │   ├── embeddings/       # Chunking, vector embedding & PGVector storage engine
-  │   ├── retrieval/        # Retriever, deduplication, thresholding & metadata reranker
+  │   ├── ingestion/        # Log parsing, metric streaming, incident ingestion
+  │   ├── embeddings/       # Vector embedding generators for ops documents & logs
+  │   ├── retrieval/        # Hybrid search (pgvector for semantic search + MongoDB for metadata)
   │   ├── orchestration/    # Multi-provider LLM agentic workflow & retry/fallback handlers
   │   ├── guardrails/       # Safety filters, validation rules & prompt guardrails
   │   ├── api/              # RESTful & WebSocket API endpoints
   │   └── models/           # Pydantic & ORM data models
   ├── evals/
   │   ├── dataset/          # Evaluation benchmarks & incident test suites
-  │   ├── run_eval.py       # Evaluation runner for diagnostic accuracy
-  │   └── tune_retrieval.py # Retrieval tuning benchmark (Precision@K & MRR)
+  │   └── run_eval.py       # Evaluation runner for diagnostic accuracy
   ├── tests/                # Automated unit & integration tests
   ├── docker-compose.yml    # Database infrastructure (PostgreSQL pgvector + MongoDB)
   ├── requirements.txt      # Core Python dependencies
@@ -45,7 +44,7 @@ intelliops-copilot/
 
 - **Ingestion (`app/ingestion/`)**: Parsers for logs, kubernetes events, deployment manifests, and telemetry data.
 - **Embeddings (`app/embeddings/`)**: Transforms ops documentation and historical logs into vector embeddings.
-- **Retrieval (`app/retrieval/`)**: Executes hybrid queries using **PostgreSQL (pgvector)** for semantic similarities and **MongoDB** for document store metadata, with similarity thresholding (0.7) and keyword reranking.
+- **Retrieval (`app/retrieval/`)**: Executes hybrid queries using **PostgreSQL (pgvector)** for semantic similarities and **MongoDB** for document store metadata.
 - **Orchestration (`app/orchestration/`)**: Manages diagnostic agent workflows using OpenAI and Google Gemini models with tenacity retries and fallback logic.
 - **Guardrails (`app/guardrails/`)**: Ensures diagnostic recommendations strictly adhere to safety constraints before execution or display.
 
@@ -91,40 +90,13 @@ Access API documentation at `http://localhost:8000/docs`.
 
 ---
 
-## 📊 Retrieval Tuning Results
-
-We benchmarked multiple retrieval configurations (`chunk_size` in tokens $\in \{200, 300, 500\}$, `top_k` $\in \{3, 5, 10\}$) across 10 fixed ground-truth operational incident queries via `python -m evals.tune_retrieval`:
-
-| Chunk Size (Tokens) | Top-K | Precision@K | MRR Score | Status |
-| :--- | :--- | :--- | :--- | :--- |
-| **200** | **3** | **0.3333** | **1.0000** | 🏆 **WINNER** |
-| 200 | 5 | 0.2000 | 1.0000 | |
-| 200 | 10 | 0.1000 | 1.0000 | |
-| 300 | 3 | 0.3333 | 1.0000 | |
-| 300 | 5 | 0.2000 | 1.0000 | |
-| 300 | 10 | 0.1000 | 1.0000 | |
-| 500 | 3 | 0.3333 | 1.0000 | |
-| 500 | 5 | 0.2000 | 1.0000 | |
-| 500 | 10 | 0.1000 | 1.0000 | |
-
-### Winning Configuration Highlights
-- **Optimal Chunk Size**: **200 tokens** (provides concise, high-density incident context chunks).
-- **Optimal Top-K**: **3** (maximizes signal-to-noise ratio and maintains an **MRR score of 1.0000**).
-- **Similarity Threshold**: **0.7** (cosine similarity cutoff to filter out low-confidence candidate matches).
-
----
-
 ## 🧪 Testing & Evals
 
 - **Run unit tests**:
   ```bash
-  python -m pytest -v
+  pytest
   ```
-- **Run retrieval tuning evaluation**:
-  ```bash
-  python -m evals.tune_retrieval
-  ```
-- **Run general evaluation suite**:
+- **Run evaluation suite**:
   ```bash
   python evals/run_eval.py
   ```
