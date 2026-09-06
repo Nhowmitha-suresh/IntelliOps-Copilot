@@ -1,6 +1,6 @@
 import json
 import structlog
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 from pydantic import BaseModel, Field
 from langchain_core.tools import tool
 from app.models import DiagnosisResult
@@ -49,7 +49,8 @@ TOOLS = [fetch_similar_incidents_tool, fetch_raw_logs_tool]
 def diagnose_issue(
     issue_description: str,
     environment: Optional[str] = None,
-    custom_llm_fn=None,
+    custom_llm_fn: Optional[Callable[[str], str]] = None,
+    embed_fn: Optional[Callable[[List[str]], List[List[float]]]] = None,
 ) -> DiagnosisResult:
     """Orchestrates root-cause analysis by retrieving evidence via tools, synthesizing
 
@@ -61,10 +62,20 @@ def diagnose_issue(
         environment=environment,
     )
 
-    # Step 1: Retrieve evidence using vector & metadata search
-    similar_incidents = retriever.retrieve_similar_incidents(
-        query_text=issue_description, top_k=3, environment=environment
-    )
+    # Step 1: Retrieve evidence using vector & metadata search (handling provider errors gracefully)
+    try:
+        similar_incidents = retriever.retrieve_similar_incidents(
+            query_text=issue_description,
+            top_k=3,
+            environment=environment,
+            embed_fn=embed_fn,
+        )
+    except Exception as ret_exc:
+        logger.warning(
+            "Vector retrieval provider unavailable. Proceeding with empty evidence.",
+            error=str(ret_exc),
+        )
+        similar_incidents = []
 
     evidence_texts = []
     evidence_ids = []

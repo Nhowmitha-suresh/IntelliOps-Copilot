@@ -15,6 +15,7 @@ try:
         llm_fallback_provider: str = "google"
         max_retries: int = 3
         request_timeout_seconds: int = 30
+        similarity_threshold: float = 0.7
 
         model_config = SettingsConfigDict(
             env_file=".env",
@@ -33,6 +34,7 @@ except ImportError:
         llm_fallback_provider: str = "google"
         max_retries: int = 3
         request_timeout_seconds: int = 30
+        similarity_threshold: float = 0.7
 
         class Config:
             env_file = ".env"
