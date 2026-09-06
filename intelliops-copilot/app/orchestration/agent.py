@@ -7,6 +7,7 @@ from app.models import DiagnosisResult
 from app.retrieval import retriever
 from app.ingestion import mongo_client
 from app.orchestration import llm_client, prompts
+from app.guardrails import output_validator
 
 logger = structlog.get_logger(__name__)
 
@@ -50,9 +51,9 @@ def diagnose_issue(
     environment: Optional[str] = None,
     custom_llm_fn=None,
 ) -> DiagnosisResult:
-    """Orchestrates root-cause analysis by retrieving evidence via tools and synthesizing
+    """Orchestrates root-cause analysis by retrieving evidence via tools, synthesizing
 
-    a structured DiagnosisResult using the multi-provider LLM client.
+    prompt context, calling LLM, and validating results through guardrails.
     """
     logger.info(
         "Starting issue diagnosis workflow",
@@ -91,29 +92,26 @@ def diagnose_issue(
         f"{json.dumps(prompts.DIAGNOSIS_RESULT_SCHEMA, indent=2)}\n"
     )
 
-    # Step 3: Call LLM
+    # Step 3: Call LLM & pass through output_validator guardrail
     try:
         if custom_llm_fn:
             response_raw = custom_llm_fn(user_prompt)
+            reask_fn = custom_llm_fn
         else:
             response_raw = llm_client.generate(
                 prompt=user_prompt,
                 response_schema=prompts.DIAGNOSIS_RESULT_SCHEMA,
             )
+            reask_fn = lambda p: llm_client.generate(
+                prompt=p, response_schema=prompts.DIAGNOSIS_RESULT_SCHEMA
+            )
 
-        # Parse JSON output
-        parsed_json = json.loads(response_raw)
-        return DiagnosisResult(
-            root_cause=parsed_json.get("root_cause", "insufficient evidence"),
-            confidence=float(parsed_json.get("confidence", 0.0)),
-            suggested_fix=parsed_json.get("suggested_fix", "Consult ops team."),
-            evidence_chunks=parsed_json.get("evidence_chunks", evidence_texts),
-            needs_human_review=bool(parsed_json.get("needs_human_review", True)),
-        )
+        # Validate response through output_validator (which also applies content_filters)
+        return output_validator.validate_diagnosis(response_raw, reask_fn=reask_fn)
 
     except Exception as exc:
         logger.warning(
-            "Failed to generate or parse LLM diagnosis. Returning safe fallback.",
+            "Failed to generate or validate LLM diagnosis. Returning safe fallback.",
             error=str(exc),
         )
         return DiagnosisResult(
