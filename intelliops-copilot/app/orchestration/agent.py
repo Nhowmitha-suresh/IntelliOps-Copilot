@@ -1,3 +1,4 @@
+import time
 import json
 import structlog
 from typing import Optional, Dict, Any, List, Callable
@@ -8,6 +9,7 @@ from app.retrieval import retriever
 from app.ingestion import mongo_client
 from app.orchestration import llm_client, prompts
 from app.guardrails import output_validator
+from app import observability
 
 logger = structlog.get_logger(__name__)
 
@@ -30,6 +32,11 @@ class FetchRawLogsInput(BaseModel):
 @tool("fetch_similar_incidents", args_schema=FetchSimilarIncidentsInput)
 def fetch_similar_incidents_tool(query_text: str, top_k: int = 3) -> str:
     """Retrieves top similar historical incident reports matching the query text."""
+    observability.log_trace_event(
+        event_type="tool_execution",
+        stage="orchestration_agent",
+        details={"tool_name": "fetch_similar_incidents", "query_text": query_text[:50]},
+    )
     results = retriever.retrieve_similar_incidents(query_text, top_k=top_k)
     return json.dumps(results, default=str)
 
@@ -37,6 +44,11 @@ def fetch_similar_incidents_tool(query_text: str, top_k: int = 3) -> str:
 @tool("fetch_raw_logs", args_schema=FetchRawLogsInput)
 def fetch_raw_logs_tool(incident_id: str) -> str:
     """Fetches full raw incident document and error logs for a given incident ID."""
+    observability.log_trace_event(
+        event_type="tool_execution",
+        stage="orchestration_agent",
+        details={"tool_name": "fetch_raw_logs", "incident_id": incident_id},
+    )
     doc = mongo_client.get_incident(incident_id)
     if not doc:
         return f"No incident record found for ID '{incident_id}'."
@@ -56,13 +68,23 @@ def diagnose_issue(
 
     prompt context, calling LLM, and validating results through guardrails.
     """
+    start_time = time.time()
+    cid = observability.get_correlation_id()
+
     logger.info(
         "Starting issue diagnosis workflow",
+        correlation_id=cid,
         issue=issue_description[:60],
         environment=environment,
     )
 
-    # Step 1: Retrieve evidence using vector & metadata search (handling provider errors gracefully)
+    observability.log_trace_event(
+        event_type="workflow_start",
+        stage="orchestration_agent",
+        details={"issue_snippet": issue_description[:60], "environment": environment},
+    )
+
+    # Step 1: Retrieve evidence using vector & metadata search
     try:
         similar_incidents = retriever.retrieve_similar_incidents(
             query_text=issue_description,
@@ -73,6 +95,7 @@ def diagnose_issue(
     except Exception as ret_exc:
         logger.warning(
             "Vector retrieval provider unavailable. Proceeding with empty evidence.",
+            correlation_id=cid,
             error=str(ret_exc),
         )
         similar_incidents = []
@@ -104,6 +127,7 @@ def diagnose_issue(
     )
 
     # Step 3: Call LLM & pass through output_validator guardrail
+    llm_start_time = time.time()
     try:
         if custom_llm_fn:
             response_raw = custom_llm_fn(user_prompt)
@@ -117,18 +141,58 @@ def diagnose_issue(
                 prompt=p, response_schema=prompts.DIAGNOSIS_RESULT_SCHEMA
             )
 
+        llm_latency = time.time() - llm_start_time
+        observability.log_trace_event(
+            event_type="llm_generation_complete",
+            stage="orchestration_llm",
+            details={"prompt_length": len(user_prompt), "response_length": len(response_raw)},
+            latency=llm_latency,
+        )
+
         # Validate response through output_validator (which also applies content_filters)
-        return output_validator.validate_diagnosis(response_raw, reask_fn=reask_fn)
+        val_start_time = time.time()
+        result = output_validator.validate_diagnosis(response_raw, reask_fn=reask_fn)
+        val_latency = time.time() - val_start_time
+
+        observability.log_trace_event(
+            event_type="guardrail_validation_complete",
+            stage="guardrails",
+            details={
+                "confidence": result.confidence,
+                "needs_human_review": result.needs_human_review,
+                "root_cause_snippet": result.root_cause[:60],
+            },
+            latency=val_latency,
+        )
+
+        total_latency = time.time() - start_time
+        observability.log_trace_event(
+            event_type="workflow_complete",
+            stage="orchestration_agent",
+            details={"status": "success", "confidence": result.confidence},
+            latency=total_latency,
+        )
+
+        return result
 
     except Exception as exc:
         logger.warning(
             "Failed to generate or validate LLM diagnosis. Returning safe fallback.",
+            correlation_id=cid,
             error=str(exc),
         )
-        return DiagnosisResult(
+        total_latency = time.time() - start_time
+        fallback_result = DiagnosisResult(
             root_cause="insufficient evidence",
             confidence=0.2,
             suggested_fix="Automated diagnosis unavailable. Please review raw logs.",
             evidence_chunks=evidence_texts,
             needs_human_review=True,
         )
+        observability.log_trace_event(
+            event_type="workflow_fallback",
+            stage="orchestration_agent",
+            details={"error": str(exc)},
+            latency=total_latency,
+        )
+        return fallback_result

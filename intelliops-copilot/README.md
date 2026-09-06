@@ -23,18 +23,22 @@ The repository is structured into focused modules:
 intelliops-copilot/
   ├── app/
   │   ├── config.py         # Application configuration & env parsing (Pydantic Settings)
-  │   ├── main.py           # FastAPI application entry point
-  │   ├── ingestion/        # Log parsing, metric streaming, incident ingestion
-  │   ├── embeddings/       # Vector embedding generators for ops documents & logs
-  │   ├── retrieval/        # Hybrid search (pgvector for semantic search + MongoDB for metadata)
-  │   ├── orchestration/    # Multi-provider LLM agentic workflow & retry/fallback handlers
-  │   ├── guardrails/       # Safety filters, validation rules & prompt guardrails
-  │   ├── api/              # RESTful & WebSocket API endpoints
+  │   ├── main.py           # FastAPI application entry point & structlog middleware
+  │   ├── observability.py  # Structlog JSON/console logging & correlation_id tracing
+  │   ├── debug_trace.py    # CLI tool to reconstruct timeline for a correlation_id
+  │   ├── ingestion/        # Log parsing, metric streaming, incident ingestion & MongoDB client
+  │   ├── embeddings/       # Chunking, vector embedding & PGVector storage engine
+  │   ├── retrieval/        # Hybrid search, similarity thresholding & metadata reranker
+  │   ├── orchestration/    # Multi-provider LLM client (OpenAI/Gemini), retries & agent tools
+  │   ├── guardrails/       # Output validator, JSON schema re-ask & destructive command filter
+  │   ├── api/              # RESTful API endpoints & static glassmorphism frontend
   │   └── models/           # Pydantic & ORM data models
   ├── evals/
-  │   ├── dataset/          # Evaluation benchmarks & incident test suites
-  │   └── run_eval.py       # Evaluation runner for diagnostic accuracy
-  ├── tests/                # Automated unit & integration tests
+  │   ├── dataset/          # Labeled benchmark test cases (eval_cases.json)
+  │   ├── run_eval.py       # Full pipeline evaluation runner (Precision@5, MRR, Accuracy)
+  │   ├── tune_retrieval.py # Retrieval hyperparameter tuning benchmark
+  │   └── eval_report.md    # Summary evaluation report
+  ├── tests/                # Automated unit & integration test suite (28 tests)
   ├── docker-compose.yml    # Database infrastructure (PostgreSQL pgvector + MongoDB)
   ├── requirements.txt      # Core Python dependencies
   └── .env.example          # Environment variable template
@@ -43,10 +47,11 @@ intelliops-copilot/
 ### Key Components
 
 - **Ingestion (`app/ingestion/`)**: Parsers for logs, kubernetes events, deployment manifests, and telemetry data.
-- **Embeddings (`app/embeddings/`)**: Transforms ops documentation and historical logs into vector embeddings.
-- **Retrieval (`app/retrieval/`)**: Executes hybrid queries using **PostgreSQL (pgvector)** for semantic similarities and **MongoDB** for document store metadata.
-- **Orchestration (`app/orchestration/`)**: Manages diagnostic agent workflows using OpenAI and Google Gemini models with tenacity retries and fallback logic.
-- **Guardrails (`app/guardrails/`)**: Ensures diagnostic recommendations strictly adhere to safety constraints before execution or display.
+- **Embeddings (`app/embeddings/`)**: Transforms ops documentation and historical logs into vector embeddings using PGVector.
+- **Retrieval (`app/retrieval/`)**: Hybrid queries using **PostgreSQL (pgvector)** and **MongoDB**, with similarity thresholding (`0.7`) and metadata reranking.
+- **Orchestration (`app/orchestration/`)**: Multi-provider LLM agentic workflow (OpenAI + Gemini fallback) with tenacity retries.
+- **Guardrails (`app/guardrails/`)**: Output validator enforcing JSON schema re-asks, low-confidence review flags, and destructive command warning filters.
+- **Observability (`app/observability.py`)**: Distributed request context tracing via `correlation_id` (uuid4).
 
 ---
 
@@ -67,18 +72,13 @@ Copy `.env.example` to create your local `.env` file:
 ```bash
 cp .env.example .env
 ```
-Update `.env` with your API keys (e.g. `OPENAI_API_KEY`, `GEMINI_API_KEY`) and connection strings if needed.
 
-### Step 3: Install Dependencies
-Create a virtual environment (optional but recommended) and install dependencies:
+### Step 3: Install Dependencies & Seed Data
 ```bash
-python -m venv venv
-# On Linux/macOS:
-source venv/bin/activate
-# On Windows:
-# .\venv\Scripts\activate
-
 pip install -r requirements.txt
+
+# Seed synthetic ops incidents into MongoDB
+python -m app.ingestion.seed_data
 ```
 
 ### Step 4: Run the Application
@@ -86,17 +86,75 @@ Start the FastAPI server:
 ```bash
 uvicorn app.main:app --reload
 ```
-Access API documentation at `http://localhost:8000/docs`.
+- **Web Interface**: Open `http://localhost:8000/` in your browser.
+- **API Docs**: Open `http://localhost:8000/docs`.
+
+---
+
+## 🔍 Debugging This System
+
+IntelliOps Copilot includes built-in observability with request correlation IDs (`correlation_id`). Every request generates or inherits a unique UUID header (`X-Correlation-ID`) that is automatically threaded through retrieval, orchestration, and guardrail validation steps.
+
+### CLI Debug Trace Tool
+Use `app/debug_trace.py` to reconstruct a step-by-step operational timeline and stage latency breakdown for any request:
+
+```bash
+python -m app.debug_trace test-trace-1234
+```
+
+### Sample Output:
+```text
+================================================================================
+ INTELLIOPS COPILOT - CORRELATION TRACE ANALYSIS
+================================================================================
+ Correlation ID : test-trace-1234
+ Total Events   : 4
+ End-to-End Latency : 0.8500s
+--------------------------------------------------------------------------------
+ STAGE TIMELINE BREAKDOWN
+--------------------------------------------------------------------------------
+ [1] [2026-09-06T15:04:05.653309Z] Stage: api_gateway | Event: http_request
+     - Method: POST /diagnose | Status: 200
+     - Stage Latency: 0.8500s
+
+ [2] [2026-09-06T15:04:06.479141Z] Stage: retrieval | Event: retrieval_complete
+     - Query Snippet: Database connection timeout
+     - Retrieved Incidents (1): INC-003
+     - Top Similarity: 0.92
+     - Stage Latency: 0.1200s
+
+ [3] [2026-09-06T15:04:06.482064Z] Stage: orchestration_llm | Event: llm_generation_complete
+     - Prompt Chars: 850 | Response Chars: 240
+     - Stage Latency: 0.6500s
+
+ [4] [2026-09-06T15:04:06.484265Z] Stage: guardrails | Event: guardrail_validation_complete
+     - Confidence Score: 0.92 | Needs Human Review: False
+     - Root Cause: PostgreSQL connection pool exhausted
+     - Stage Latency: 0.0800s
+
+--------------------------------------------------------------------------------
+ STAGE LATENCY SUMMARY
+--------------------------------------------------------------------------------
+  - api_gateway              : 0.8500s (100.0%)
+  - retrieval                : 0.1200s (14.1%)
+  - orchestration_llm        : 0.6500s (76.5%)
+  - guardrails               : 0.0800s (9.4%)
+================================================================================
+```
 
 ---
 
 ## 🧪 Testing & Evals
 
-- **Run unit tests**:
+- **Run full unit test suite (28 tests)**:
   ```bash
-  pytest
+  python -m pytest -v
   ```
-- **Run evaluation suite**:
+- **Run end-to-end evaluation harness**:
   ```bash
-  python evals/run_eval.py
+  python -m evals.run_eval
+  ```
+- **Run retrieval tuning benchmark**:
+  ```bash
+  python -m evals.tune_retrieval
   ```

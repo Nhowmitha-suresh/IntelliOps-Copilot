@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from app.api.routes import router as api_router
 from app.config import settings
+from app import observability
 
 logger = structlog.get_logger(__name__)
 
@@ -18,13 +19,30 @@ app = FastAPI(
 
 @app.middleware("http")
 async def log_request_middleware(request: Request, call_next):
-    """Structlog middleware logging HTTP method, path, status_code, and latency."""
+    """Structlog middleware logging correlation_id, HTTP method, path, status_code, and latency."""
+    client_cid = request.headers.get("X-Correlation-ID")
+    cid = observability.set_correlation_id(client_cid)
+
     start_time = time.time()
     response = await call_next(request)
     latency = time.time() - start_time
 
+    response.headers["X-Correlation-ID"] = cid
+
+    observability.log_trace_event(
+        event_type="http_request",
+        stage="api_gateway",
+        details={
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+        },
+        latency=latency,
+    )
+
     logger.info(
         "HTTP Request",
+        correlation_id=cid,
         method=request.method,
         path=request.url.path,
         status_code=response.status_code,

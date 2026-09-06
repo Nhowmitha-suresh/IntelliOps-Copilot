@@ -1,9 +1,11 @@
+import time
 import structlog
 from typing import List, Dict, Any, Optional, Callable
 from app.config import settings
 from app.embeddings import embedder, pgvector_store
 from app.ingestion import mongo_client
 from app.retrieval import reranker
+from app import observability
 
 logger = structlog.get_logger(__name__)
 
@@ -30,6 +32,7 @@ def retrieve_similar_incidents(
     if not query_text or not query_text.strip():
         return []
 
+    start_time = time.time()
     if threshold is None:
         threshold = settings.similarity_threshold
 
@@ -49,7 +52,6 @@ def retrieve_similar_incidents(
         raw_results = pgvector_store.similarity_search(query_vector, top_k=top_k * 4)
 
     # 3 & 4. Deduplicate by incident_id & convert cosine distance to similarity score
-    # Cosine distance d in [0, 2]; Similarity s = 1.0 - d (clamped between 0 and 1)
     best_chunks_by_incident: Dict[str, Dict[str, Any]] = {}
 
     for chunk_dict, distance in raw_results:
@@ -73,6 +75,7 @@ def retrieve_similar_incidents(
         if item["similarity_score"] < threshold:
             logger.warning(
                 "Low confidence retrieval",
+                correlation_id=observability.get_correlation_id(),
                 incident_id=inc_id,
                 similarity_score=item["similarity_score"],
                 threshold=threshold,
@@ -82,6 +85,12 @@ def retrieve_similar_incidents(
             valid_candidates.append(item)
 
     if not valid_candidates:
+        observability.log_trace_event(
+            event_type="retrieval_complete",
+            stage="retrieval",
+            details={"candidates_found": 0, "retrieved_ids": []},
+            latency=time.time() - start_time,
+        )
         return []
 
     # 6. Rerank candidates
@@ -103,5 +112,20 @@ def retrieve_similar_incidents(
         final_results.append(candidate)
         if len(final_results) >= top_k:
             break
+
+    ret_latency = time.time() - start_time
+    retrieved_ids = [res["incident_id"] for res in final_results]
+
+    observability.log_trace_event(
+        event_type="retrieval_complete",
+        stage="retrieval",
+        details={
+            "query_snippet": query_text[:60],
+            "retrieved_count": len(final_results),
+            "retrieved_ids": retrieved_ids,
+            "top_similarity": final_results[0]["similarity_score"] if final_results else 0.0,
+        },
+        latency=ret_latency,
+    )
 
     return final_results
