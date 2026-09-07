@@ -1,1 +1,0 @@
-# minigpt unit tests package

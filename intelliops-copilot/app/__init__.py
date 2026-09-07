@@ -1,1 +1,0 @@
-"""IntelliOps Copilot app package."""

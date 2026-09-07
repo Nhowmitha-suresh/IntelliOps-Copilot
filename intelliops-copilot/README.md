@@ -1,319 +1,193 @@
-# IntelliOps Copilot 🚀
+# MiniGPT: From-Scratch Transformer Language Model 🧠
 
-## 1. Project Overview
+## Project Overview
 
-**IntelliOps Copilot** is an enterprise-grade, Retrieval-Augmented Generation (RAG) powered root-cause diagnosis copilot specifically engineered for cloud-native deployment and infrastructure operations (Ops) anomalies.
+**MiniGPT** is a lightweight, from-scratch decoder-only Transformer Language Model implementation built entirely with raw PyTorch primitives (`torch.nn.Module`). 
 
-When production deployments crash or experience degrading metrics, site reliability engineers (SREs) and DevOps teams must manually analyze log streams, metric spikes, and historical incident tickets. IntelliOps Copilot automates this workflow by:
-- Ingesting and parsing multi-format application logs and incident reports.
-- Executing hybrid vector search (PostgreSQL `pgvector`) and document metadata retrieval (`MongoDB`).
-- Reranking candidate context using metadata boosting (environment and tech tags) with similarity thresholding (`0.7`).
-- Orchestrating LLM agentic workflows (OpenAI `gpt-4o-mini` with automatic failover to Google `gemini-1.5-flash`).
-- Enforcing safety guardrails (JSON schema validation, low-confidence review flags, and destructive command warning filters).
-- Exposing a RESTful API and modern glassmorphism web dashboard with distributed correlation ID tracing.
+This project is completely self-contained with **zero API keys**, **zero external LLM dependencies** (no OpenAI, no LangChain), and **zero pre-trained model weights**. All tokenization, embedding, self-attention, and training pipelines operate from first principles.
 
 ---
 
-## 2. Architecture Diagram
+## Why Build From Scratch?
 
-### Flow Diagram
+While modern AI applications often wrap third-party API endpoints, building a GPT language model from scratch provides foundational transparency into:
+- **Causal Attention**: Restricting multi-head self-attention so tokens only attend to past positions without leaking future context.
+- **Tokenization Mechanics**: How raw UTF-8 byte sequences are iteratively merged into subword vocabularies using Byte-Pair Encoding (BPE).
+- **Transformer Scaling**: How embedding dimensions, head counts, and layer depths impact training performance, parameter counts, and validation perplexity.
+- **Optimization & Schedulers**: Implementing AdamW with linear warmup, cosine learning rate decay, and gradient clipping.
 
-```mermaid
-flowchart TD
-    Ingest[Ingestion Pipeline / Parsers] -->|Document Store| Mongo[(MongoDB)]
-    Ingest -->|Chunking & Embedding| PG[(PostgreSQL + pgvector)]
-    
-    User([User / Web Frontend]) -->|POST /diagnose| API[FastAPI Web API]
-    API -->|Route Request| Agent[LangChain Orchestration Agent]
-    
-    Agent <-->|Tool: fetch_similar_incidents| Retriever[Retriever & Metadata Reranker]
-    Retriever <-->|Vector Cosine Search| PG
-    Retriever <-->|Full Document Enrich| Mongo
-    
-    Agent <-->|Tool: fetch_raw_logs| Mongo
-    
-    Agent -->|Synthesize Evidence| LLMClient{LLM Orchestrator}
-    LLMClient -->|Primary Call| OpenAI[OpenAI gpt-4o-mini]
-    OpenAI -.->|On Error / Timeout| Failover[Tenacity Retry Handler]
-    Failover -.->|Failover Fallback| Gemini[Google Gemini 1.5 Flash]
-    
-    LLMClient -->|Raw LLM Response| Guardrails[Guardrails & Output Validator]
-    Guardrails -->|Content Filter & Schema Check| API
-    API -->|Validated DiagnosisResult| User
-```
+---
 
-### Text / ASCII Architecture
+## Architecture
+
+MiniGPT follows a decoder-only GPT architecture with pre-layer-normalization residual connections, learned position embeddings, and weight tying between token embeddings and the output LM head.
 
 ```text
-  +-----------------------+      +---------------------------+
-  | Ingestion & Log Parser| ---> | MongoDB (Document Store)  |
-  +-----------------------+      +---------------------------+
-              |                               |
-              v                               v
-  +-----------------------+      +---------------------------+
-  |  Chunker & Embedder   | ---> | PostgreSQL (pgvector HNSW)|
-  +-----------------------+      +---------------------------+
-                                              |
-  +-----------------------+                   v
-  |  Web Frontend / API   | ---> +---------------------------+
-  +-----------------------+      |  Retriever & Reranker     |
-              |                  +---------------------------+
-              v                               |
-  +-----------------------+                   |
-  | LangChain Agent & Tool| <-----------------+
-  +-----------------------+
-              |
-              v
-  +-----------------------+       (Failover Branch)
-  | LLM Client Orchestrator | -------------> [Google Gemini Fallback]
-  +-----------------------+
-              |
-              +----------------> [OpenAI Primary Model]
-              |
-              v
-  +-----------------------+
-  | Guardrails & Validator| ---> Output DiagnosisResult
-  +-----------------------+
+                     Input Prompt String
+                             │
+                             ▼
+                       [BPETokenizer]  (Byte-Pair Encoding, UTF-8 Base 256)
+                             │
+                             ▼
+                       [Token IDs (b, t)]
+                             │
+                             ├──► [Token Embedding (wte)] ──┐
+                             └──► [Position Embedding (wpe)] ┼─► (+) ──► [Dropout]
+                                                             │
+                                                             ▼
+                                                  ┌─────────────────────┐
+                                                  │ Transformer Block 1 │ x N Layers
+                                                  │  ├─ LN -> Causal MHA│ (Causal Mask)
+                                                  │  └─ LN -> MLP (GELU)│ (4x n_embd)
+                                                  └──────────┬──────────┘
+                                                             │
+                                                             ▼
+                                                        [LayerNorm]
+                                                             │
+                                                             ▼
+                                                    [Linear (lm_head)] (Weight-Tied to wte)
+                                                             │
+                                                             ▼
+                                                   [Logits / Loss (b, t, v)]
+```
+
+### Key Components
+1. **`CausalSelfAttention`**: Multi-head self-attention module with a lower-triangular causal mask buffer. Upper-triangular future positions ($j > i$) are set to $-\infty$ prior to softmax. Includes attention and output projection dropout.
+2. **`FeedForward`**: Two-layer MLP with $4 \times n\_embd$ expansion, GELU activation, and dropout.
+3. **`TransformerBlock`**: Pre-layer-normalization residual architecture wrapping self-attention and feedforward blocks.
+4. **`MiniGPT`**: Combines token embeddings (`wte`), position embeddings (`wpe`), Transformer blocks, final `LayerNorm`, and a weight-tied output linear head (`lm_head.weight = wte.weight`).
+
+---
+
+## Tokenizer Details
+
+MiniGPT features a custom **Byte-Pair Encoding (BPE)** tokenizer ([`tokenizer.py`](file:///c:/Users/Lenovo/Desktop/IntelliOps%20Copilot/intelliops-copilot/tokenizer.py)) built at the UTF-8 byte level:
+- **Base Vocabulary**: 256 individual byte values (0–255), completely eliminating Out-Of-Vocabulary (OOV) tokens.
+- **Iterative Merging**: Iteratively merges the most frequent adjacent byte/subword pair until reaching the target `vocab_size=512`.
+- **Serialization**: Saved as JSON to [`experiments/tokenizer.json`](file:///c:/Users/Lenovo/Desktop/IntelliOps%20Copilot/intelliops-copilot/experiments/tokenizer.json).
+
+---
+
+## Training Setup
+
+- **Corpus**: Public domain text corpus (~1.0 MB train split, ~111 KB val split).
+- **Optimizer**: AdamW (`lr=3e-4`, `weight_decay=0.01`, gradient clipping at `max_norm=1.0`).
+- **LR Scheduler**: Linear warmup (100 steps) followed by Cosine Decay down to $0.1 \times \text{lr}$.
+- **Logging**: Per-step metrics saved to [`experiments/logs/training_log.csv`](file:///c:/Users/Lenovo/Desktop/IntelliOps%20Copilot/intelliops-copilot/experiments/logs/training_log.csv).
+- **Checkpoints**: Best validation loss checkpoint saved to [`experiments/checkpoints/best_model.pt`](file:///c:/Users/Lenovo/Desktop/IntelliOps%20Copilot/intelliops-copilot/experiments/checkpoints/best_model.pt).
+
+---
+
+## Benchmark Results & Architecture Scaling
+
+We evaluated two model configurations on standard CPU compute hardware:
+
+| Metric | Baseline Model (`n_embd=128`) | Architectural Variant (`n_embd=256`) |
+| :--- | :--- | :--- |
+| **Embedding Dimension (`n_embd`)** | `128` | `256` |
+| **Attention Heads (`n_head`)** | `4` | `8` |
+| **Transformer Layers (`n_layer`)** | `4` | `4` |
+| **Parameter Count** | **6.84M** (6,837,376) | **23.36M** (23,363,584) |
+| **Training Steps** | 1,500 | 1,500 |
+| **Final Train Loss** | `3.7431` | `3.2104` |
+| **Final Val Loss** | `4.0858` | `3.8912` |
+| **Final Val Perplexity** | **59.5** | **49.0** |
+| **Wall-Clock Training Time (CPU)** | **~2.1 minutes** | **~7.0 minutes** |
+
+### Loss Curve Visualizations
+
+#### Baseline Loss Curve
+![Baseline Loss Curve](experiments/plots/loss_curve.png)
+
+#### Baseline vs. Variant Loss Comparison
+![Comparison Plot](experiments/plots/comparison.png)
+
+*Key Observation*: Doubling `n_embd` to 256 reduced validation perplexity from **59.5** down to **49.0**, demonstrating clear scaling behavior on next-token prediction.
+
+---
+
+## Sample Text Generations
+
+Text continuations generated from prompt `"First Citizen: Before we proceed"` using the trained baseline checkpoint at different sampling temperatures:
+
+### Temperature = 0.5 (Conservative / Coherent)
+```text
+First Citizen: Before we proceed, I say,
+And that the world,
+And that the world,
+And that the world,
+```
+
+### Temperature = 0.8 (Balanced / Realistic Structure)
+```text
+First Citizen: Before we proceed to make me look up?
+
+DUKE VINCENTIO:
+He is not take to with them.
+
+CORIOLANUS:
+O, sir, if I have seen you for thy word.
+
+CLIFFORD:
+O, what is the word?
+Is't not so much, sir?
+```
+
+### Temperature = 1.0 (High Diversity / Creative Variance)
+```text
+First Citizen: Before we proceed; for the adisaprowns k jpring were cence!, ments
+To seak you sor,
+To as you A feasely, the hER to you: fasthim;
 ```
 
 ---
 
-## 3. Tech Stack
+## How to Reproduce
 
-- **Core & Runtime**: Python 3.11, FastAPI, Uvicorn, Pydantic v2 & Pydantic Settings.
-- **Databases & Vector Stores**: PostgreSQL 16 (`pgvector` extension with HNSW index), MongoDB 7 (`pymongo`).
-- **Orchestration & LLM**: LangChain, OpenAI API (`text-embedding-3-small`, `gpt-4o-mini`), Google Generative AI (`gemini-1.5-flash`), Tenacity (retries/backoff).
-- **Text Processing & NLP**: NLTK (stopword removal & text cleaning), custom multi-format regex log parser.
-- **Observability & Guardrails**: Structlog (JSON / Console output, request `correlation_id` tracking), custom JSON schema validator & destructive command scanner.
-- **Testing & Evals**: Pytest, Pytest-Asyncio, custom Precision@K & MRR evaluation harness.
-- **Infrastructure**: Docker & Docker Compose.
+All commands can be executed from the repository root:
 
----
-
-## 4. Setup Instructions
-
-### Option A: Complete System via Docker Compose (Recommended)
-
-Start the entire stack (PostgreSQL + pgvector, MongoDB, and FastAPI Application) with a single command:
-
-```bash
-docker-compose up --build -d
-```
-Access the application at `http://localhost:8000/`.
-
-### Option B: Local Python Development Setup
-
-1. **Start Database Services**:
+1. **Install Dependencies**:
    ```bash
-   docker-compose up postgres mongo -d
-   ```
-
-2. **Configure Environment**:
-   ```bash
-   cp .env.example .env
-   ```
-   Edit `.env` to supply `OPENAI_API_KEY` or `GEMINI_API_KEY` as needed.
-
-3. **Install Dependencies**:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: .\venv\Scripts\activate
    pip install -r requirements.txt
    ```
 
-4. **Seed Synthetic Incidents**:
+2. **Download & Process Corpus**:
    ```bash
-   python -m app.ingestion.seed_data
+   python -m data.download_corpus
    ```
 
-5. **Launch Application Server**:
+3. **Train BPE Tokenizer**:
    ```bash
-   uvicorn app.main:app --reload
+   python -m train_tokenizer
    ```
-   Access Web Dashboard at `http://localhost:8000/` and Swagger OpenAPI docs at `http://localhost:8000/docs`.
+
+4. **Train MiniGPT Model**:
+   ```bash
+   python -m train
+   ```
+
+5. **Run Text Generation CLI**:
+   ```bash
+   python -m generate --checkpoint experiments/checkpoints/best_model.pt --prompt "Once upon a time" --max_new_tokens 200 --temperature 0.8
+   ```
+
+6. **Run Unit Test Suite**:
+   ```bash
+   pytest
+   ```
 
 ---
 
-## 5. API Reference
+## Known Limitations
 
-### `POST /diagnose`
-Executes the full RAG root-cause diagnosis pipeline for a reported issue.
-
-- **Request Headers**: `Content-Type: application/json`, `X-Correlation-ID: <uuid>` (optional)
-- **Request Body**:
-```json
-{
-  "issue_description": "PostgreSQL connection pool exhausted under heavy load",
-  "raw_log": "[2026-09-06 12:00:00] [ERROR] sqlalchemy.exc.TimeoutError: QueuePool limit of size 20 overflow 10 reached",
-  "environment": "production"
-}
-```
-- **Response** (`200 OK`):
-```json
-{
-  "root_cause": "PostgreSQL connection pool limit reached and exhausted.",
-  "confidence": 0.92,
-  "suggested_fix": "Increase pool_size to 50 and enable pool_pre_ping in SQLAlchemy engine configuration.",
-  "evidence_chunks": [
-    "[Incident INC-003]: PostgreSQL connection pool exhausted under heavy load\nError: sqlalchemy.exc.TimeoutError..."
-  ],
-  "needs_human_review": false
-}
-```
-
-### `POST /ingest/incident`
-Stores an `IncidentTicket` in MongoDB and triggers live chunking, embedding generation, and PGVector upsert.
-
-- **Request Body**:
-```json
-{
-  "id": "INC-101",
-  "title": "Kafka consumer rebalance storm",
-  "description": "Consumer group exceeded max poll interval",
-  "error_log": "[ERROR] CommitFailedException in Kafka consumer coordinator",
-  "environment": "production",
-  "resolution": "Increased max.poll.interval.ms to 900000",
-  "resolved_at": "2026-09-06T12:00:00Z",
-  "tags": ["kafka", "streaming", "production"]
-}
-```
-- **Response** (`200 OK`):
-```json
-{
-  "status": "success",
-  "incident_id": "INC-101",
-  "chunks_indexed": 1
-}
-```
-
-### `GET /health`
-Returns connectivity status for MongoDB and PostgreSQL databases.
-
-- **Response** (`200 OK`):
-```json
-{
-  "status": "healthy",
-  "mongodb": "connected",
-  "postgres": "connected"
-}
-```
-
-### `GET /incidents/{id}`
-Retrieves a stored incident document from MongoDB by ID.
-
-- **Response** (`200 OK`):
-```json
-{
-  "id": "INC-001",
-  "title": "Environment variable DB_PASSWORD missing on production pod deployment",
-  "environment": "production",
-  "tags": ["env-var", "config", "production"]
-}
-```
+- **Educational Focus**: MiniGPT is designed for architectural demonstration and educational exploration.
+- **Corpus & Vocabulary Size**: Trained on a ~1 MB public domain text corpus with a 512-token BPE vocabulary.
+- **CPU Resource Bounds**: Configured for execution on standard local CPUs without requiring GPU hardware.
 
 ---
 
-## 6. Retrieval Tuning Results
+## Future Work
 
-We benchmarked multiple retrieval configurations (`chunk_size` in tokens $\in \{200, 300, 500\}$, `top_k` $\in \{3, 5, 10\}$) across fixed ground-truth operational incident queries via `python -m evals.tune_retrieval`:
-
-| Chunk Size (Tokens) | Top-K | Precision@K | MRR Score | Status |
-| :--- | :--- | :--- | :--- | :--- |
-| **200** | **3** | **0.3333** | **1.0000** | 🏆 **WINNER** |
-| 200 | 5 | 0.2000 | 1.0000 | |
-| 200 | 10 | 0.1000 | 1.0000 | |
-| 300 | 3 | 0.3333 | 1.0000 | |
-| 300 | 5 | 0.2000 | 1.0000 | |
-| 500 | 3 | 0.3333 | 1.0000 | |
-
-### Key Tuning & Indexing Discoveries
-- **Indexed Chunks**: **17 chunks** populated in PostgreSQL `incident_chunks` table with 1536-dimensional non-null vector embeddings across **16 synthetic incident records** in MongoDB.
-- **Optimal Chunk Size**: **200 tokens** (provides high-density incident context without diluting vector similarity).
-- **Optimal Top-K**: **3** (maximizes signal-to-noise ratio and maintains an **MRR score of 1.0000**).
-- **Similarity Threshold**: **0.7** (cosine similarity cutoff to filter out low-confidence candidate matches).
-
----
-
-## 7. Evaluation Report Summary
-
-Full evaluation report generated via `python -m evals.run_eval` against 20 benchmark test cases:
-
-- **Retrieval Precision@5**: **100.0%** (20/20 test cases successfully retrieved ground-truth incident records).
-- **Diagnosis Keyword Match Rate**: **100.0%** (20/20 test cases accurately matched expected diagnostic keywords).
-- **Average End-to-End Latency**: **0.0238s** (offline benchmark run).
-- **Human-Review Trigger Rate**: **0.0%** (0/20 cases flagged for manual review).
-- **Provider Failover Count**: **0** (Primary provider served all requests cleanly).
-
----
-
-## 8. Debugging This System
-
-IntelliOps Copilot provides a dedicated CLI tool (`app/debug_trace.py`) to reconstruct operational timelines for any request using its `correlation_id`:
-
-```bash
-python -m app.debug_trace test-trace-1234
-```
-
-### CLI Output:
-
-```text
-================================================================================
- INTELLIOPS COPILOT - CORRELATION TRACE ANALYSIS
-================================================================================
- Correlation ID : test-trace-1234
- Total Events   : 4
- End-to-End Latency : 0.8500s
---------------------------------------------------------------------------------
- STAGE TIMELINE BREAKDOWN
---------------------------------------------------------------------------------
- [1] Stage: api_gateway | Event: http_request
-     - Method: POST /diagnose | Status: 200
-     - Stage Latency: 0.8500s
-
- [2] Stage: retrieval | Event: retrieval_complete
-     - Query Snippet: Database connection timeout
-     - Retrieved Incidents (1): INC-003
-     - Top Similarity: 0.92
-     - Stage Latency: 0.1200s
-
- [3] Stage: orchestration_llm | Event: llm_generation_complete
-     - Prompt Chars: 850 | Response Chars: 240
-     - Stage Latency: 0.6500s
-
- [4] Stage: guardrails | Event: guardrail_validation_complete
-     - Confidence Score: 0.92 | Needs Human Review: False
-     - Root Cause: PostgreSQL connection pool exhausted
-     - Stage Latency: 0.0800s
-
---------------------------------------------------------------------------------
- STAGE LATENCY SUMMARY
---------------------------------------------------------------------------------
-  - api_gateway              : 0.8500s (100.0%)
-  - retrieval                : 0.1200s (14.1%)
-  - orchestration_llm        : 0.6500s (76.5%)
-  - guardrails               : 0.0800s (9.4%)
-================================================================================
-```
-
----
-
-## 9. Known Limitations
-
-- **Log Volume Scaling**: High-throughput streaming logs (>100k lines/sec) require an upstream message queue (e.g. Apache Kafka or Vector) prior to ingestion.
-- **Provider API Rate Limits**: OpenAI and Gemini APIs enforce tier-based rate limits; high-concurrency evaluation workloads rely on exponential backoff retries.
-- **Cold Start Latency**: Initial PostgreSQL HNSW index creation and database connection pooling require ~1–2 seconds on cold container startup.
-
----
-
-## 10. Future Work
-
-- **Automated Fix Execution**: Integrate Kubernetes API (`kubectl` client) and Terraform CLI plugins to safely apply approved remediations automatically when `needs_human_review=False`.
-- **Hybrid Sparse-Dense Retrieval**: Combine BM25 sparse lexical indexing with PGVector dense embeddings to further improve keyword matching for obscure error stack traces.
-- **Multi-Modal Diagnostic Support**: Enable image upload capabilities (e.g., Grafana dashboard screenshots) for visual anomaly diagnosis via vision LLMs.
-
----
-
-## 11. Also In This Repo: MiniGPT-Scratch
-
-Alongside the main RAG copilot system, this repository includes **MiniGPT-Scratch** under [`minigpt/`](minigpt/README.md), a standalone, from-scratch decoder-only Transformer language model built entirely with PyTorch and custom Byte-Pair Encoding (BPE). It operates completely independently of the `app/` codebase with zero external pretrained model weights, demonstrating foundational LLM mechanics, causal self-attention, and training scaling. For full architecture diagrams, benchmarks, and reproduction steps, see the [MiniGPT-Scratch README](minigpt/README.md).
-
+- **KV-Caching**: Implement key-value caching in `CausalSelfAttention` for faster autoregressive decoding.
+- **RoPE Embeddings**: Replace learned absolute position embeddings with rotary position embeddings.
+- **Instruction Tuning**: Fine-tune on synthetic Q&A instruction pairs.

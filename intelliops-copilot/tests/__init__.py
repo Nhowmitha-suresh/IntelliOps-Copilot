@@ -1,1 +1,1 @@
-# tests root package
+# minigpt unit tests package
