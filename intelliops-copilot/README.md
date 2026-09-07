@@ -310,3 +310,10 @@ python -m app.debug_trace test-trace-1234
 - **Automated Fix Execution**: Integrate Kubernetes API (`kubectl` client) and Terraform CLI plugins to safely apply approved remediations automatically when `needs_human_review=False`.
 - **Hybrid Sparse-Dense Retrieval**: Combine BM25 sparse lexical indexing with PGVector dense embeddings to further improve keyword matching for obscure error stack traces.
 - **Multi-Modal Diagnostic Support**: Enable image upload capabilities (e.g., Grafana dashboard screenshots) for visual anomaly diagnosis via vision LLMs.
+
+---
+
+## 11. Also In This Repo: MiniGPT-Scratch
+
+Alongside the main RAG copilot system, this repository includes **MiniGPT-Scratch** under [`minigpt/`](minigpt/README.md), a standalone, from-scratch decoder-only Transformer language model built entirely with PyTorch and custom Byte-Pair Encoding (BPE). It operates completely independently of the `app/` codebase with zero external pretrained model weights, demonstrating foundational LLM mechanics, causal self-attention, and training scaling. For full architecture diagrams, benchmarks, and reproduction steps, see the [MiniGPT-Scratch README](minigpt/README.md).
+
