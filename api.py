@@ -1,12 +1,26 @@
 import sys
 import os
+import importlib.util
 
-# Add intelliops-copilot directory to sys.path
-copilot_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "intelliops-copilot")
+# Add intelliops-copilot directory to sys.path for internal imports (generate, model, dataset, tokenizer)
+base_dir = os.path.dirname(os.path.abspath(__file__))
+copilot_dir = os.path.join(base_dir, "intelliops-copilot")
 if copilot_dir not in sys.path:
     sys.path.insert(0, copilot_dir)
 
-from api import app, MODELS, TOKENIZER, load_all_models
+# Dynamically import backend api from intelliops-copilot/api.py under alias 'backend_api'
+# to avoid circular import when root module is named 'api'.
+target_api_path = os.path.join(copilot_dir, "api.py")
+spec = importlib.util.spec_from_file_location("backend_api", target_api_path)
+backend_api = importlib.util.module_from_spec(spec)
+sys.modules["backend_api"] = backend_api
+spec.loader.exec_module(backend_api)
+
+# Expose app, models, tokenizer, and helper functions on root api module
+app = backend_api.app
+MODELS = backend_api.MODELS
+TOKENIZER = backend_api.TOKENIZER
+load_all_models = backend_api.load_all_models
 
 if __name__ == "__main__":
     import uvicorn
