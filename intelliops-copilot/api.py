@@ -132,7 +132,16 @@ class InstructionRequest(BaseModel):
     seed: Optional[int] = Field(default=None)
 
 
+@app.get("/")
+def root():
+    return {
+        "message": "IntelliOps Copilot API is running",
+        "status": "online",
+    }
+
+
 @app.get("/health")
+
 def health():
     ensure_models_loaded()
     return {
