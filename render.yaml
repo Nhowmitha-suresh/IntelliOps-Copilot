@@ -9,11 +9,16 @@ services:
       - key: ALLOWED_ORIGINS
         value: "*"
 
-  # React Frontend Static Site
-  - type: static
+  # React Frontend Static Site (Render Blueprint spec: type 'web' with runtime 'static')
+  - type: web
     name: intelliops-copilot-frontend
+    runtime: static
     buildCommand: cd frontend && npm install && npm run build
-    publishPath: frontend/.output/public
+    staticPublishPath: frontend/.output/public
     envVars:
       - key: VITE_API_URL
         value: https://intelliops-copilot-backend.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
