@@ -68,9 +68,11 @@ def train(
     tokenizer_path: str = "experiments/tokenizer.json",
     checkpoint_dir: str = "experiments/checkpoints",
     log_dir: str = "experiments/logs",
+    log_filename: str = "training_log.csv",
     plots_dir: str = "experiments/plots",
     model_cfg: Optional[ModelConfig] = None,
     train_cfg: Optional[TrainConfig] = None,
+    resume_path: Optional[str] = None,
     verbose: bool = True,
 ):
     """
@@ -105,11 +107,29 @@ def train(
     else:
         val_text = "MiniGPT val text sample " * 200
 
-    train_ids = tokenizer.encode(train_text)
-    val_ids = tokenizer.encode(val_text)
+    # Use disk cache only for default dataset files
+    use_cache = (train_txt_path == "data/processed/train.txt" and val_txt_path == "data/processed/val.txt")
+    cache_dir = "experiments/data_cache"
+    os.makedirs(cache_dir, exist_ok=True)
+    train_cache = os.path.join(cache_dir, "train_ids.pt")
+    val_cache = os.path.join(cache_dir, "val_ids.pt")
+
+    if use_cache and os.path.exists(train_cache) and os.path.exists(val_cache):
+        if verbose:
+            print("Loading tokenized datasets from cache...")
+        train_ids = torch.load(train_cache)
+        val_ids = torch.load(val_cache)
+    else:
+        if verbose:
+            print("Encoding train and val datasets...", flush=True)
+        train_ids = tokenizer.encode(train_text)
+        val_ids = tokenizer.encode(val_text)
+        if use_cache:
+            torch.save(train_ids, train_cache)
+            torch.save(val_ids, val_cache)
 
     if verbose:
-        print(f"Train tokens: {len(train_ids):,}, Val tokens: {len(val_ids):,}")
+        print(f"Train tokens: {len(train_ids):,}, Val tokens: {len(val_ids):,}", flush=True)
 
     # 2. Setup Config & Datasets
     if model_cfg is None:
@@ -137,33 +157,69 @@ def train(
     warmup_iters = min(100, max(1, train_cfg.max_iters // 10))
     min_lr = train_cfg.learning_rate / 10.0
 
+    start_step = 0
+    best_val_loss = float("inf")
+    prev_elapsed = 0.0
+
+    if resume_path and os.path.exists(resume_path):
+        if verbose:
+            print(f"Resuming training from checkpoint: {resume_path}...")
+        ckpt_info = load_checkpoint(resume_path, model, optimizer)
+        ckpt_step = ckpt_info.get("step", 0)
+        best_val_loss = ckpt_info.get("loss", float("inf"))
+        start_step = ckpt_step + 1 if ckpt_step > 0 else 0
+        if verbose:
+            print(f"Loaded checkpoint at step {ckpt_step}. Resuming training loop at step {start_step} with best val loss {best_val_loss:.4f}")
+
+
     # Ensure log directories exist
-    log_csv_path = os.path.join(log_dir, "training_log.csv")
+    log_csv_path = os.path.join(log_dir, log_filename)
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(checkpoint_dir, exist_ok=True)
     os.makedirs(plots_dir, exist_ok=True)
 
-    # Initialize CSV log file
-    csv_file = open(log_csv_path, "w", newline="", encoding="utf-8")
-    csv_writer = csv.writer(csv_file)
-    csv_writer.writerow(["step", "train_loss", "val_loss", "train_ppl", "val_ppl", "learning_rate", "elapsed_time_sec"])
-    csv_file.flush()
-
     train_loss_history = []
     val_loss_history = []
     eval_steps_history = []
-    best_val_loss = float("inf")
+
+    # Initialize CSV log file (append if resuming, overwrite if fresh start)
+    if resume_path and os.path.exists(log_csv_path) and start_step > 0:
+        with open(log_csv_path, "r", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            header = next(reader, None)
+            for row in reader:
+                if len(row) >= 7:
+                    try:
+                        st = int(row[0])
+                        tr_l = float(row[1])
+                        va_l = float(row[2])
+                        el_t = float(row[6])
+                        eval_steps_history.append(st)
+                        train_loss_history.append(tr_l)
+                        val_loss_history.append(va_l)
+                        prev_elapsed = el_t
+                    except ValueError:
+                        pass
+        csv_file = open(log_csv_path, "a", newline="", encoding="utf-8")
+        csv_writer = csv.writer(csv_file)
+    else:
+        csv_file = open(log_csv_path, "w", newline="", encoding="utf-8")
+        csv_writer = csv.writer(csv_file)
+        csv_writer.writerow(["step", "train_loss", "val_loss", "train_ppl", "val_ppl", "learning_rate", "elapsed_time_sec"])
+        csv_file.flush()
+
     best_ckpt_path = os.path.join(checkpoint_dir, "best_model.pt")
     final_ckpt_path = os.path.join(checkpoint_dir, "checkpoint_final.pt")
+    last_ckpt_path = os.path.join(checkpoint_dir, "checkpoint_last.pt")
 
     train_iter = iter(train_loader)
-    start_time = time.time()
+    start_time = time.time() - prev_elapsed
 
     if verbose:
-        print(f"Starting training for {train_cfg.max_iters} iterations...")
+        print(f"Starting training from step {start_step} for {train_cfg.max_iters} iterations...")
 
     model.train()
-    pbar = tqdm(range(train_cfg.max_iters), desc="Training MiniGPT", disable=not verbose)
+    pbar = tqdm(range(start_step, train_cfg.max_iters), desc="Training MiniGPT", disable=not verbose)
     for step in pbar:
         # LR Schedule step
         lr = get_lr(step, warmup_iters, train_cfg.max_iters, train_cfg.learning_rate, min_lr)
@@ -210,6 +266,9 @@ def train(
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 save_checkpoint(best_ckpt_path, model, optimizer, step, val_loss)
+                save_checkpoint(os.path.join(checkpoint_dir, "best.pt"), model, optimizer, step, val_loss)
+
+            save_checkpoint(last_ckpt_path, model, optimizer, step, val_loss)
 
     csv_file.close()
 
@@ -232,6 +291,19 @@ def train(
 
 
 if __name__ == "__main__":
-    # Short run with max_iters=500 to verify pipeline end-to-end
-    cfg_train = TrainConfig(max_iters=500, eval_interval=100, eval_iters=10)
-    train(train_cfg=cfg_train)
+    import argparse
+    parser = argparse.ArgumentParser(description="Train MiniGPT model.")
+    parser.add_argument(
+        "--resume",
+        type=str,
+        nargs="?",
+        const="experiments/checkpoints/best.pt",
+        default=None,
+        help="Path to checkpoint to resume training from (default: experiments/checkpoints/best.pt)",
+    )
+    parser.add_argument("--max_iters", type=int, default=12000, help="Maximum training iterations")
+    args = parser.parse_args()
+
+    cfg_train = TrainConfig(max_iters=args.max_iters)
+    train(train_cfg=cfg_train, resume_path=args.resume)
+

@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.log
+node_modules/
+.output/
+dist/
+.env
+.env.local
+intelliops-copilot/experiments/data_cache/
+*checkpoint_last.pt
+*checkpoint_final.pt
+

@@ -20,8 +20,8 @@ def test_train_config_defaults():
     cfg = TrainConfig()
     assert cfg.batch_size == 32
     assert cfg.learning_rate == 3e-4
-    assert cfg.max_iters == 5000
-    assert cfg.eval_interval == 250
+    assert cfg.max_iters == 12000
+    assert cfg.eval_interval == 500
     assert cfg.eval_iters == 50
     assert cfg.device in ["cuda", "cpu"]
 

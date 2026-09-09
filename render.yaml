@@ -1,0 +1,19 @@
+services:
+  # FastAPI Backend Web Service
+  - type: web
+    name: intelliops-copilot-backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ALLOWED_ORIGINS
+        value: "*"
+
+  # React Frontend Static Site
+  - type: static
+    name: intelliops-copilot-frontend
+    buildCommand: cd frontend && npm install && npm run build
+    publishPath: frontend/.output/public
+    envVars:
+      - key: VITE_API_URL
+        value: https://intelliops-copilot-backend.onrender.com

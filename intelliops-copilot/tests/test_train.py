@@ -63,3 +63,105 @@ def test_checkpoint_save_load_roundtrip(tmp_path):
     # Check weight equality
     for p1, p2 in zip(model1.parameters(), model2.parameters()):
         assert torch.equal(p1, p2), "Model parameters must match after loading checkpoint"
+
+
+def test_train_resume_pipeline(tmp_path):
+    train_file = tmp_path / "train.txt"
+    val_file = tmp_path / "val.txt"
+    train_file.write_text("Hello world MiniGPT training pipeline test synthetic corpus text " * 20, encoding="utf-8")
+    val_file.write_text("Hello world MiniGPT val corpus text " * 10, encoding="utf-8")
+
+    m_cfg = ModelConfig(vocab_size=100, block_size=8, n_embd=16, n_head=2, n_layer=1)
+    t_cfg1 = TrainConfig(batch_size=2, max_iters=5, eval_interval=2, eval_iters=2)
+
+    # Initial train run 0..5
+    train(
+        train_txt_path=str(train_file),
+        val_txt_path=str(val_file),
+        tokenizer_path="non_existent_tokenizer.json",
+        checkpoint_dir=str(tmp_path),
+        log_dir=str(tmp_path),
+        plots_dir=str(tmp_path),
+        model_cfg=m_cfg,
+        train_cfg=t_cfg1,
+        verbose=False,
+    )
+
+    ckpt_path = tmp_path / "best.pt"
+    assert ckpt_path.exists()
+
+    # Resume train run 5..10
+    t_cfg2 = TrainConfig(batch_size=2, max_iters=10, eval_interval=2, eval_iters=2)
+    model, tokenizer, tr_loss, val_loss = train(
+        train_txt_path=str(train_file),
+        val_txt_path=str(val_file),
+        tokenizer_path="non_existent_tokenizer.json",
+        checkpoint_dir=str(tmp_path),
+        log_dir=str(tmp_path),
+        plots_dir=str(tmp_path),
+        model_cfg=m_cfg,
+        train_cfg=t_cfg2,
+        resume_path=str(ckpt_path),
+        verbose=False,
+    )
+
+    log_csv = tmp_path / "training_log.csv"
+    assert log_csv.exists()
+    lines = log_csv.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) > 2
+
+
+def test_resume_step_counter_advancement(tmp_path):
+    train_file = tmp_path / "train.txt"
+    val_file = tmp_path / "val.txt"
+    train_file.write_text("Hello world MiniGPT training pipeline test synthetic corpus text " * 20, encoding="utf-8")
+    val_file.write_text("Hello world MiniGPT val corpus text " * 10, encoding="utf-8")
+
+    m_cfg = ModelConfig(vocab_size=100, block_size=8, n_embd=16, n_head=2, n_layer=1)
+    t_cfg1 = TrainConfig(batch_size=2, max_iters=6, eval_interval=2, eval_iters=2)
+
+    # Initial training run 0..6 (evals at 0, 2, 4, 5)
+    train(
+        train_txt_path=str(train_file),
+        val_txt_path=str(val_file),
+        tokenizer_path="non_existent_tokenizer.json",
+        checkpoint_dir=str(tmp_path),
+        log_dir=str(tmp_path),
+        plots_dir=str(tmp_path),
+        model_cfg=m_cfg,
+        train_cfg=t_cfg1,
+        verbose=False,
+    )
+
+    ckpt_path = tmp_path / "checkpoint_final.pt"
+    assert ckpt_path.exists()
+    info = torch.load(str(ckpt_path), map_location="cpu")
+    assert info["step"] == 6
+
+
+    # Resume training run 6..10
+    t_cfg2 = TrainConfig(batch_size=2, max_iters=10, eval_interval=2, eval_iters=2)
+    train(
+        train_txt_path=str(train_file),
+        val_txt_path=str(val_file),
+        tokenizer_path="non_existent_tokenizer.json",
+        checkpoint_dir=str(tmp_path),
+        log_dir=str(tmp_path),
+        plots_dir=str(tmp_path),
+        model_cfg=m_cfg,
+        train_cfg=t_cfg2,
+        resume_path=str(ckpt_path),
+        verbose=False,
+    )
+
+    log_csv = tmp_path / "training_log.csv"
+    lines = log_csv.read_text(encoding="utf-8").strip().splitlines()
+    steps = [int(line.split(",")[0]) for line in lines[1:] if line.strip()]
+
+    # Assert no duplicate step logs and strict advancement up to max_iters
+    assert len(steps) == len(set(steps)), f"Duplicate steps found in log: {steps}"
+    assert steps == sorted(steps), f"Steps not monotonically increasing: {steps}"
+    assert max(steps) == 9, f"Expected final step 9, got {max(steps)}"
+    assert 8 in steps, f"Expected step 8 after resume, got {steps}"
+
+

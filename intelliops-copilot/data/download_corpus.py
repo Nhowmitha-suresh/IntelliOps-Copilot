@@ -8,7 +8,12 @@ DEFAULT_URLS = [
     "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt",
     "https://www.gutenberg.org/cache/epub/100/pg100.txt",
     "https://www.gutenberg.org/files/1342/1342-0.txt",
+    "https://www.gutenberg.org/cache/epub/1661/pg1661.txt",
+    "https://www.gutenberg.org/cache/epub/84/pg84.txt",
+    "https://www.gutenberg.org/cache/epub/11/pg11.txt",
+    "https://www.gutenberg.org/cache/epub/2701/pg2701.txt",
 ]
+
 
 
 def strip_gutenberg_header_footer(text: str) -> str:
@@ -87,18 +92,23 @@ def download_and_prepare_corpus(
     os.makedirs(os.path.dirname(raw_path), exist_ok=True)
     os.makedirs(os.path.dirname(processed_clean_path), exist_ok=True)
 
-    raw_text = None
+    downloaded_chunks = []
     for url in urls:
         try:
             print(f"Attempting to download corpus from: {url}")
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=15) as resp:
-                raw_text = resp.read().decode("utf-8", errors="ignore")
-                if len(raw_text) > 1000:
-                    print(f"Successfully downloaded {len(raw_text):,} characters.")
-                    break
+                text_part = resp.read().decode("utf-8", errors="ignore")
+                if len(text_part) > 1000:
+                    print(f"Successfully downloaded {len(text_part):,} characters from {url}.")
+                    downloaded_chunks.append(text_part)
         except Exception as e:
             print(f"Failed to download from {url}: {e}")
+
+    if downloaded_chunks:
+        raw_text = "\n\n".join(downloaded_chunks)
+    else:
+        raw_text = None
 
     if not raw_text:
         print("Using synthetic sample fallback corpus for offline mode.")

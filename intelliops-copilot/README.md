@@ -80,19 +80,22 @@ MiniGPT features a custom **Byte-Pair Encoding (BPE)** tokenizer ([`tokenizer.py
 
 ## Benchmark Results & Architecture Scaling
 
-We evaluated two model configurations on standard CPU compute hardware:
+We evaluated two model configurations on standard CPU compute hardware over 12,000 training iterations:
 
 | Metric | Baseline Model (`n_embd=128`) | Architectural Variant (`n_embd=256`) |
 | :--- | :--- | :--- |
 | **Embedding Dimension (`n_embd`)** | `128` | `256` |
-| **Attention Heads (`n_head`)** | `4` | `8` |
+| **Attention Heads (`n_head`)** | `4` | `4` |
 | **Transformer Layers (`n_layer`)** | `4` | `4` |
-| **Parameter Count** | **6.84M** (6,837,376) | **23.36M** (23,363,584) |
-| **Training Steps** | 1,500 | 1,500 |
-| **Final Train Loss** | `3.7431` | `3.2104` |
-| **Final Val Loss** | `4.0858` | `3.8912` |
-| **Final Val Perplexity** | **59.5** | **49.0** |
-| **Wall-Clock Training Time (CPU)** | **~2.1 minutes** | **~7.0 minutes** |
+| **Parameter Count** | **875.26K** (875,264) | **3.32M** (3,323,392) |
+| **Training Steps** | 12,000 | 12,000 |
+| **Best Checkpoint Step** | Step 12,000 | **Step 11,000** |
+| **Best Val Loss** | `2.4656` | **`2.2031`** (-10.6%) |
+| **Best Val Perplexity** | `11.77` | **`9.05`** (-23.1%) |
+| **Final Step (11,999) Val Loss** | `2.5120` | `2.2114` |
+| **Final Step (11,999) Val PPL** | `12.33` | `9.13` |
+| **Wall-Clock Training Time** | **~5,400s (~1.5 hours)** | **24,684s (~6.86 hours)** |
+| **Steps to Baseline Val PPL (~11.8)** | 12,000 steps | **~3,000 steps** (4x faster sample efficiency) |
 
 ### Loss Curve Visualizations
 
@@ -102,7 +105,7 @@ We evaluated two model configurations on standard CPU compute hardware:
 #### Baseline vs. Variant Loss Comparison
 ![Comparison Plot](experiments/plots/comparison.png)
 
-*Key Observation*: Doubling `n_embd` to 256 reduced validation perplexity from **59.5** down to **49.0**, demonstrating clear scaling behavior on next-token prediction.
+*Key Observation*: Doubling `n_embd` from 128 to 256 increased parameter count from 875K to 3.32M (3.8x capacity) and reduced validation perplexity from **11.77** down to **9.05** (-23.1%), while reaching baseline-level quality (`val_ppl ~11.8`) in just **3,000 steps** (25% of the total baseline training run).
 
 ---
 
@@ -168,10 +171,16 @@ All commands can be executed from the repository root:
 
 5. **Run Text Generation CLI**:
    ```bash
-   python -m generate --checkpoint experiments/checkpoints/best_model.pt --prompt "Once upon a time" --max_new_tokens 200 --temperature 0.8
+   python -m generate --checkpoint experiments/checkpoints/best.pt --prompt "Once upon a time" --max_new_tokens 200 --temperature 0.8
    ```
 
-6. **Run Unit Test Suite**:
+6. **Launch Local Streamlit Web UI**:
+   ```bash
+   streamlit run app_ui.py
+   ```
+   *Opens an interactive web application in your local browser tab (e.g. `http://localhost:8501`). Requires no internet connection, no API keys, and no separate build step.*
+
+7. **Run Unit Test Suite**:
    ```bash
    pytest
    ```
